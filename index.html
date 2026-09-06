@@ -155,7 +155,10 @@ video{width:100%;border-radius:12px;background:#000;display:block}
       </div>
     </div>
 
-    <div class="metodos">
+    <div class="metodos" style="grid-template-columns:1fr 1fr 1fr">
+      <button class="metodo" data-metodo="leitor">
+        <span class="ic">🔒</span><b>Leitor USB</b><small>dedo específico</small>
+      </button>
       <button class="metodo on" data-metodo="digital">
         <span class="ic">👆</span><b>Digital</b><small>leitor do aparelho</small>
       </button>
@@ -168,6 +171,31 @@ video{width:100%;border-radius:12px;background:#000;display:block}
       <div class="anel" id="anel">👆</div>
       <p class="sub" style="text-align:center" id="instrucao">Toque no leitor quando o aparelho pedir.</p>
       <button class="btn btn-l" id="btnLer">Ler digital agora</button>
+    </div>
+
+    <!-- LEITOR USB, via ponte local -->
+    <div id="areaLeitor" class="oculto">
+      <div id="ponteEstado"></div>
+      <div class="anel" id="anelLeitor">🔒</div>
+      <p class="sub" style="text-align:center" id="instrucaoLeitor">
+        Encoste o dedo no leitor quando a luz acender.</p>
+
+      <div class="campo">
+        <label>Qual dedo</label>
+        <select id="qualDedo">
+          <option value="indicador-direito">Indicador direito</option>
+          <option value="polegar-direito">Polegar direito</option>
+          <option value="medio-direito">Médio direito</option>
+          <option value="indicador-esquerdo">Indicador esquerdo</option>
+          <option value="polegar-esquerdo">Polegar esquerdo</option>
+        </select>
+      </div>
+
+      <div id="capturasFeitas" style="margin-bottom:10px"></div>
+
+      <button class="btn btn-l" id="btnCapturarDedo">Capturar (1 de 3)</button>
+      <button class="btn btn-v oculto" id="btnSalvarDedo">Salvar cadastro</button>
+      <button class="btn btn-g" id="btnTestarDedo" style="margin-top:8px">Testar identificação</button>
     </div>
 
     <div id="areaFacial" class="oculto">
@@ -382,6 +410,8 @@ var amb = verificarAmbiente();
 
 Array.prototype.forEach.call(document.querySelectorAll('[data-metodo]'), function (b) {
   var tipo = b.getAttribute('data-metodo');
+  /* o leitor USB fala com a ponte, não com o navegador: funciona
+     em qualquer endereço, inclusive arquivo local */
   if ((tipo === 'digital' && !amb.digital) || (tipo === 'facial' && !amb.camera)) {
     b.classList.add('off');
   }
@@ -398,7 +428,9 @@ Array.prototype.forEach.call(document.querySelectorAll('[data-metodo]'), functio
     b.classList.add('on');
     $('areaDigital').classList.toggle('oculto', tipo !== 'digital');
     $('areaFacial').classList.toggle('oculto', tipo !== 'facial');
+    $('areaLeitor').classList.toggle('oculto', tipo !== 'leitor');
     limpar('avisoCaptura');
+    if (tipo === 'leitor') { PONTE.capturas = []; pintarCapturas(); verificarPonte(); }
   };
 });
 
@@ -461,6 +493,69 @@ $('btnLer').onclick = function () {
   });
 };
 
+/* ============================================================
+   LEITOR USB — via ponte local
+   ------------------------------------------------------------
+   A ponte roda no próprio computador e conversa com o leitor.
+   É o único caminho que distingue um dedo do outro: os traços
+   são comparados de verdade, não delegados ao Windows.
+   ============================================================ */
+
+var PONTE = { url: 'http://127.0.0.1:8787', ativa: false, capturas: [] };
+
+function chamarPonte(metodo, caminho, corpo) {
+  return fetch(PONTE.url + caminho, {
+    method: metodo,
+    headers: { 'Content-Type': 'application/json' },
+    body: corpo ? JSON.stringify(corpo) : undefined
+  }).then(function (r) { return r.json(); })
+    .catch(function () {
+      return { ok: false, codigo: 'PONTE_OFFLINE',
+               mensagem: 'A ponte do leitor não está rodando neste computador.' };
+    });
+}
+
+function verificarPonte() {
+  return chamarPonte('GET', '/status').then(function (r) {
+    PONTE.ativa = !!r.ok;
+    var alvo = $('pontéEstado') || $('pontéEstado') || document.getElementById('pontéEstado');
+    alvo = document.getElementById('pontéEstado') || document.getElementById('ponteEstado');
+    if (!alvo) return r;
+
+    if (!r.ok) {
+      alvo.innerHTML = '<div class="aviso a-er"><div><b>Ponte do leitor não encontrada</b>' +
+        'Abra o programa <b>ALMOXA PONTE</b> neste computador e deixe a janela aberta. ' +
+        'Sem ele, o navegador não consegue falar com o leitor USB.</div></div>';
+      return r;
+    }
+
+    alvo.innerHTML = '<div class="aviso a-ok"><div><b>Leitor conectado</b>' +
+      esc(r.driver) + (r.simulado ? ' — MODO TESTE, sem leitor real' : '') +
+      '<br>' + r.cadastrados + ' pessoa(s) cadastrada(s) nesta máquina.</div></div>';
+    return r;
+  });
+}
+
+function pintarCapturas() {
+  var alvo = document.getElementById('capturasFeitas');
+  if (!alvo) return;
+  var total = 3;
+  alvo.innerHTML = '<div class="linha"><span>Capturas deste dedo</span>' +
+    '<span class="tag ' + (PONTE.capturas.length >= total ? 't-ok' : 't-no') + '">' +
+    PONTE.capturas.length + ' de ' + total + '</span></div>';
+
+  var botao = document.getElementById('btnCapturarDedo');
+  var salvar = document.getElementById('btnSalvarDedo');
+  if (PONTE.capturas.length >= total) {
+    botao.classList.add('oculto');
+    salvar.classList.remove('oculto');
+  } else {
+    botao.classList.remove('oculto');
+    salvar.classList.add('oculto');
+    botao.textContent = 'Capturar (' + (PONTE.capturas.length + 1) + ' de ' + total + ')';
+  }
+}
+
 /* ---------------- FACIAL ---------------- */
 $('btnCamera').onclick = function () {
   var b = this;
@@ -492,6 +587,97 @@ $('btnCapturar').onclick = function () {
 
   /* guarda só a confirmação da captura, não a imagem */
   salvarCredencial('facial', 'CAP-' + Date.now());
+};
+
+/* ---------------- BOTÕES DO LEITOR ---------------- */
+
+document.getElementById('btnCapturarDedo').onclick = function () {
+  var b = this;
+  b.innerHTML = '<span class="spin"></span> Encoste o dedo…';
+  b.disabled = true;
+  document.getElementById('anelLeitor').className = 'anel lendo';
+
+  /* no modo teste, a semente simula sempre o mesmo dedo */
+  chamarPonte('POST', '/capturar', {
+    semente: CFG.pessoa.matricula + '-' + document.getElementById('qualDedo').value
+  }).then(function (r) {
+    b.disabled = false;
+
+    if (!r.ok) {
+      document.getElementById('anelLeitor').className = 'anel erro';
+      b.textContent = 'Tentar de novo';
+      aviso('avisoCaptura', 'er',
+        r.codigo === 'QUALIDADE_BAIXA' ? 'Leitura fraca' : 'A leitura não foi concluída',
+        r.mensagem || '');
+      return;
+    }
+
+    PONTE.capturas.push(r.dados.template);
+    document.getElementById('anelLeitor').className = 'anel ok';
+    document.getElementById('instrucaoLeitor').textContent =
+      PONTE.capturas.length >= 3
+        ? 'As três leituras foram feitas. Salve o cadastro.'
+        : 'Boa. Levante o dedo e encoste de novo, um pouco diferente.';
+    limpar('avisoCaptura');
+    pintarCapturas();
+  });
+};
+
+document.getElementById('btnSalvarDedo').onclick = function () {
+  var b = this;
+  b.innerHTML = '<span class="spin"></span> Salvando…';
+  b.disabled = true;
+
+  chamarPonte('POST', '/cadastrar', {
+    matricula: CFG.pessoa.matricula,
+    nome: CFG.pessoa.nome,
+    cargo: CFG.pessoa.cargo,
+    dedo: document.getElementById('qualDedo').value,
+    amostras: PONTE.capturas,
+    qualidade: 85,
+    cadastradoPor: (CFG.operador && CFG.operador.nome) || 'estação'
+  }).then(function (r) {
+    b.innerHTML = 'Salvar cadastro';
+    b.disabled = false;
+
+    if (!r.ok) {
+      aviso('avisoCaptura', 'er', 'Não foi cadastrado', r.mensagem || '');
+      return;
+    }
+
+    PONTE.capturas = [];
+    pintarCapturas();
+    document.getElementById('anelLeitor').className = 'anel ok';
+    aviso('avisoCaptura', 'ok', 'Dedo cadastrado',
+      CFG.pessoa.nome + ' — ' + r.dados.dedo.replace('-', ' ') +
+      '. Agora só este dedo (e os outros cadastrados) libera as operações.');
+    verificarPonte();
+  });
+};
+
+document.getElementById('btnTestarDedo').onclick = function () {
+  var b = this;
+  b.innerHTML = '<span class="spin"></span> Encoste o dedo…';
+  b.disabled = true;
+
+  chamarPonte('POST', '/identificar', {
+    semente: CFG.pessoa.matricula + '-' + document.getElementById('qualDedo').value
+  }).then(function (r) {
+    b.textContent = 'Testar identificação';
+    b.disabled = false;
+
+    if (!r.ok) {
+      aviso('avisoCaptura', 'er', 'Não identificado',
+        r.mensagem + (r.diagnostico ? ' (semelhança ' + r.diagnostico.score + ')' : ''));
+      return;
+    }
+
+    var certo = String(r.dados.matricula) === String(CFG.pessoa.matricula);
+    aviso('avisoCaptura', certo ? 'ok' : 'at',
+      certo ? 'Reconhecido corretamente' : 'Reconheceu OUTRA pessoa',
+      r.dados.nome + ' · ' + r.dados.dedo.replace('-', ' ') +
+      ' · semelhança ' + r.dados.score);
+  });
 };
 
 /* ---------------- GRAVAÇÃO NO CORE ---------------- */
